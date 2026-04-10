@@ -1,5 +1,5 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const APP_URL = "https://followed-termination-craig-sep.trycloudflare.com";
+  const APP_URL = "https://mooselabs-bundle-app.onrender.com";
   
   const rootDiv        = document.getElementById("gbb-custom-bundle-root");    
   const stepsContainer = document.getElementById("gbb-dynamic-steps-container");
