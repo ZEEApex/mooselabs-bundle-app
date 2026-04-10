@@ -412,7 +412,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       if (res.ok) {
-        window.location.href = '/cart';
+        window.location.href = '/checkout';
       }
     } catch(err) {
       console.error(err);
