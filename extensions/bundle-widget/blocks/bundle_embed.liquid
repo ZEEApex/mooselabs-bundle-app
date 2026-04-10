@@ -1,0 +1,43 @@
+{{ 'bundle-styles.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'bundle-script.js' | asset_url }}" defer="defer"></script>
+
+<div id="gbb-custom-bundle-root" data-product-id="{{ product.id }}">
+  <div class="gbbMixAndMatchBundleWrapper">
+    <div class="gbbMixPageWrapper gbbMixProductPageWrapperV2">
+      <div class="gbbMixProductPageWidgetContainer">
+        
+        <div id="gbb-dynamic-steps-container" class="gbbMixProductPageCategoriesWrapperVStacked">
+           <p style="text-align: center;">Loading Bundle...</p>
+        </div>
+
+        <div class="gbbMixBundleAddToCartBtnWrapper" style="margin-top: 20px;">
+          <div id="gbb-add-to-cart-btn" class="gbbMixAddtoCartBtn gbbMixAddtoCartBtnV2 gbbMixAddtoCartBtnDisabled" style="cursor: not-allowed; opacity: 0.5;">
+            Add Bundle to Cart 
+            <span class="gbbMixBundlePrice">• $0.00</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="gbb-modal-overlay" class="gbbMixProductsModalOverlay"></div>
+<div id="gbb-modal" class="gbbMixProductsModal gbbMixProductsModalClose">
+  <div class="gbbMixModalHeader" style="padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+    <div id="gbb-modal-title" class="gbbMixCategoriesConditionsText" style="font-weight: bold; font-size: 18px;">Select Products</div>
+    <div id="gbb-modal-close" class="gbbMixModalCloseIconWrapper" style="cursor: pointer;">
+      <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true" width="20" height="20"><path d="M13.97 15.03a.75.75 0 1 0 1.06-1.06l-3.97-3.97 3.97-3.97a.75.75 0 0 0-1.06-1.06l-3.97 3.97-3.97-3.97a.75.75 0 0 0-1.06 1.06l3.97 3.97-3.97 3.97a.75.75 0 1 0 1.06 1.06l3.97-3.97 3.97 3.97Z"></path></svg>
+    </div>
+  </div>
+  <div id="gbb-modal-body" class="gbbMixModalBody" style="padding: 20px;">
+    </div>
+</div>
+
+{% schema %}
+{
+  "name": "Product Bundle Builder",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}

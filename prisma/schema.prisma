@@ -1,0 +1,68 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- CUSTOM BUNDLE MODELS ---
+
+model Bundle {
+  id              String   @id @default(uuid())
+  shop            String
+  name            String
+  status          String   @default("DRAFT")
+  steps           Step[]   
+  parentVariantId String?  // <--- CHANGED THIS TO MATCH THE ERROR!
+  configuration   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Step {
+  id        String     @id @default(uuid())
+  bundleId  String
+  name      String
+  order     Int
+  bundle    Bundle     @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  categories Category[] // Links to Categories
+}
+
+model Category {
+  id                        String   @id @default(uuid())
+  stepId                    String
+  name                      String
+  title                     String
+  displayVariantsAsProducts Boolean  @default(false) // <--- YOUR NEW TOGGLE
+  order                     Int
+  step                      Step     @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  // Add your product linking logic here based on your app's structure
+}
