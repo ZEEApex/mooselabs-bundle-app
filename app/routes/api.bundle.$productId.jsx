@@ -1,5 +1,5 @@
 import db from "../db.server";
-
+ 
 export const action = async ({ request }) => {
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -11,19 +11,19 @@ export const action = async ({ request }) => {
     });
   }
 };
-
+ 
 export const loader = async ({ params }) => {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
-
+ 
   try {
     const bundles = await db.bundle.findMany({ where: { status: "ACTIVE" } });
     let matchedBundle = null;
     let config = null;
-
+ 
     for (const b of bundles) {
       if (b.configuration) {
         const parsedConfig = JSON.parse(b.configuration);
@@ -34,9 +34,9 @@ export const loader = async ({ params }) => {
         }
       }
     }
-
+ 
     if (!matchedBundle) return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
-
+ 
     const categories = [];
     config.steps.forEach(step => {
       step.categories.forEach(cat => {
@@ -45,23 +45,25 @@ export const loader = async ({ params }) => {
           name: cat.name,
           title: cat.title,
           rule: cat.rule,
-          products: cat.products.map(p => ({
-            id: p.id,
-            variantId: p.variantId,
-            title: p.title,
-            imageUrl: p.image,
-            price: 10.00
-          }))
+          products: cat.products
+            .filter(p => p.available !== false)
+            .map(p => ({
+              id: p.id,
+              variantId: p.variantId,
+              title: p.title,
+              imageUrl: p.image,
+              price: parseFloat(p.price || 0),
+              available: p.available !== false,
+            }))
         });
       });
     });
-
-    // ✅ All 3 discount types mapped correctly
+ 
     const discountTypeRaw = config.discount?.type || "";
-    const discountType = discountTypeRaw === "Percentage Off"   ? "PERCENTAGE"  :
-                         discountTypeRaw === "Fixed Amount Off" ? "FIXED"       :
+    const discountType = discountTypeRaw === "Percentage Off"    ? "PERCENTAGE"  :
+                         discountTypeRaw === "Fixed Amount Off"  ? "FIXED"       :
                          discountTypeRaw === "Fixed Bundle Price" ? "FIXED_PRICE" : "NONE";
-
+ 
     const responseData = {
       id: matchedBundle.id,
       name: matchedBundle.name,
@@ -73,9 +75,10 @@ export const loader = async ({ params }) => {
       successMessage:  config.discount?.successMessage || "",
       categories
     };
-
+ 
     return Response.json(responseData, { headers: corsHeaders });
   } catch (error) {
+    console.error("Bundle API error:", error);
     return Response.json({ error: "Server error" }, { status: 500, headers: corsHeaders });
   }
 };
