@@ -5,11 +5,11 @@ import {
   Select, Thumbnail, Layout 
 } from '@shopify/polaris';
 import { ChevronDownIcon, ChevronUpIcon, DeleteIcon, PlusIcon, ImageIcon } from '@shopify/polaris-icons';
- 
+
 export default function BundleSetupUI({ initialData }) {
   
   const [parentProduct, setParentProduct] = useState(initialData?.parentProduct || null);
- 
+
   const [steps, setSteps] = useState(initialData?.steps || [
     {
       id: Date.now().toString(),
@@ -27,7 +27,7 @@ export default function BundleSetupUI({ initialData }) {
       ]
     }
   ]);
- 
+
   const [discount, setDiscount] = useState(initialData?.discount || {
     enabled: true,
     type: 'Percentage Off',
@@ -35,21 +35,21 @@ export default function BundleSetupUI({ initialData }) {
     ruleText: 'Add 1 product to get 10% OFF discount!',
     successMessage: "Sweet! You've scored 10% OFF your bundle!"
   });
- 
+
   // --- SHOPIFY RESOURCE PICKER LOGIC ---
   const openResourcePicker = async (isParent = false, stepIndex = null, catIndex = null) => {
     if (!window.shopify) {
       alert("App Bridge is not available.");
       return;
     }
- 
+
     const selected = await window.shopify.resourcePicker({
       type: 'product',
       multiple: !isParent,
     });
- 
+
     if (!selected || selected.length === 0) return;
- 
+
     if (isParent) {
       const product = selected[0];
       const firstVariant = product.variants?.[0];
@@ -62,7 +62,7 @@ export default function BundleSetupUI({ initialData }) {
     } else {
       const newSteps = [...steps];
       const existingProducts = newSteps[stepIndex].categories[catIndex].products;
- 
+
       const newProducts = [];
       selected.forEach(product => {
         product.variants?.forEach(variant => {
@@ -70,43 +70,41 @@ export default function BundleSetupUI({ initialData }) {
           const displayTitle = variantTitle
             ? `${product.title} (${variantTitle})`
             : product.title;
- 
+
           // Avoid duplicates
           const alreadyAdded = existingProducts.some(p => p.variantId === variant.id);
           if (!alreadyAdded) {
             newProducts.push({
               id: product.id,
               variantId: variant.id,
+              handle: product.handle || "", // NEW: Grabbing handle
+              price: parseFloat(variant.price) || 0, // NEW: Grabbing price
               title: displayTitle,
               image: variant.image?.originalSrc
                   || product.images?.[0]?.originalSrc
                   || product.featuredImage?.url
-                  || "",
-              // Store real price from resource picker (comes as a decimal string e.g. "19.99")
-              price: parseFloat(variant.price || 0),
-              // Store availability so out-of-stock can be filtered
-              available: variant.availableForSale !== false,
+                  || ""
             });
           }
         });
       });
- 
+
       newSteps[stepIndex].categories[catIndex].products = [...existingProducts, ...newProducts];
       setSteps(newSteps);
     }
   };
- 
+
   const removeCategoryProduct = (stepIndex, catIndex, prodIndex) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories[catIndex].products.splice(prodIndex, 1);
     setSteps(newSteps);
-  };
- 
+  }
+
   // --- CATEGORY ACTIONS ---
   const addStep = () => {
     setSteps([...steps, { id: Date.now().toString(), name: `Step ${steps.length + 1}`, categories: [] }]);
   };
- 
+
   const addCategory = (stepIndex) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories.push({
@@ -120,38 +118,37 @@ export default function BundleSetupUI({ initialData }) {
     });
     setSteps(newSteps);
   };
- 
+
   const toggleCategory = (stepIndex, catIndex) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories[catIndex].isExpanded = !newSteps[stepIndex].categories[catIndex].isExpanded;
     setSteps(newSteps);
   };
- 
+
   const updateCategory = (stepIndex, catIndex, field, value) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories[catIndex][field] = value;
     setSteps(newSteps);
   };
- 
+
   const updateCategoryRule = (stepIndex, catIndex, field, value) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories[catIndex].rule[field] = value;
     setSteps(newSteps);
   };
- 
+
   const removeCategory = (stepIndex, catIndex) => {
     const newSteps = [...steps];
     newSteps[stepIndex].categories.splice(catIndex, 1);
     setSteps(newSteps);
   };
- 
+
   const removeStep = (stepIndex) => {
     const newSteps = [...steps];
     newSteps.splice(stepIndex, 1);
     setSteps(newSteps);
   };
- 
-  // --- RENDER ---
+
   return (
     <BlockStack gap="500">
       
@@ -180,7 +177,7 @@ export default function BundleSetupUI({ initialData }) {
           </Box>
         </BlockStack>
       </Card>
- 
+
       {/* 2. STEPS & CATEGORIES BUILDER */}
       {steps.map((step, stepIndex) => (
         <Card key={step.id} roundedAbove="sm">
@@ -199,7 +196,7 @@ export default function BundleSetupUI({ initialData }) {
             <Divider />
             
             <Text variant="headingSm" as="h3">Categories</Text>
- 
+
             {step.categories.map((cat, catIndex) => (
               <Box key={cat.id} padding="400" borderWidth="025" borderColor="border" borderRadius="100">
                 <BlockStack gap="400">
@@ -212,18 +209,16 @@ export default function BundleSetupUI({ initialData }) {
                     </InlineStack>
                     <Button icon={DeleteIcon} tone="critical" variant="plain" onClick={() => removeCategory(stepIndex, catIndex)} />
                   </InlineStack>
- 
+
                   {/* Category Body */}
                   <Collapsible open={cat.isExpanded} id={`cat-${cat.id}`} transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}>
                     <BlockStack gap="400">
                       
-                      {/* Name & Title */}
                       <Box paddingBlockStart="200">
                         <TextField label="Category Name (Internal)" value={cat.name} onChange={(val) => updateCategory(stepIndex, catIndex, 'name', val)} autoComplete="off" />
                       </Box>
                       <TextField label="Category Title (Visible to customers)" value={cat.title} onChange={(val) => updateCategory(stepIndex, catIndex, 'title', val)} autoComplete="off" />
- 
-                      {/* Rules Configuration */}
+
                       <Box padding="300" background="bg-surface-secondary" borderRadius="100">
                         <BlockStack gap="300">
                           <Text variant="headingXs" as="h5">Rules Configuration</Text>
@@ -257,8 +252,7 @@ export default function BundleSetupUI({ initialData }) {
                           </InlineStack>
                         </BlockStack>
                       </Box>
- 
-                      {/* Product Picker & Display */}
+
                       <Box padding="400" borderWidth="025" borderColor="border" borderRadius="100">
                         <BlockStack gap="300">
                           <InlineStack align="space-between" blockAlign="center">
@@ -266,21 +260,13 @@ export default function BundleSetupUI({ initialData }) {
                             <Button size="small" onClick={() => openResourcePicker(false, stepIndex, catIndex)}>Add Products</Button>
                           </InlineStack>
                           
-                          {/* List Selected Products */}
                           {cat.products.length > 0 && (
                             <BlockStack gap="200">
                               {cat.products.map((prod, prodIndex) => (
                                 <InlineStack key={prodIndex} align="space-between" blockAlign="center">
                                   <InlineStack gap="300" blockAlign="center">
                                     <Thumbnail source={prod.image || ImageIcon} alt={prod.title} size="small" />
-                                    <BlockStack gap="0">
-                                      <Text variant="bodySm">{prod.title}</Text>
-                                      {/* ✅ Show price + stock status in admin UI */}
-                                      <Text variant="bodySm" tone={prod.available === false ? "critical" : "subdued"}>
-                                        ${parseFloat(prod.price || 0).toFixed(2)}
-                                        {prod.available === false ? " · Out of stock" : ""}
-                                      </Text>
-                                    </BlockStack>
+                                    <Text variant="bodySm">{prod.title}</Text>
                                   </InlineStack>
                                   <Button variant="plain" tone="critical" icon={DeleteIcon} onClick={() => removeCategoryProduct(stepIndex, catIndex, prodIndex)}/>
                                 </InlineStack>
@@ -289,7 +275,7 @@ export default function BundleSetupUI({ initialData }) {
                           )}
                         </BlockStack>
                       </Box>
- 
+
                       <Checkbox
                         label="Display variants as individual products"
                         checked={cat.displayVariantsAsProducts}
@@ -300,18 +286,18 @@ export default function BundleSetupUI({ initialData }) {
                 </BlockStack>
               </Box>
             ))}
- 
+
             <InlineStack align="start">
               <Button icon={PlusIcon} variant="plain" onClick={() => addCategory(stepIndex)}>Add Category</Button>
             </InlineStack>
           </BlockStack>
         </Card>
       ))}
- 
+
       <InlineStack align="center">
         <Button icon={PlusIcon} size="large" onClick={addStep}>Add Step</Button>
       </InlineStack>
- 
+
       {/* 3. DISCOUNT & PRICING ENGINE */}
       <Card roundedAbove="sm">
         <BlockStack gap="400">
@@ -320,7 +306,7 @@ export default function BundleSetupUI({ initialData }) {
             <Checkbox checked={discount.enabled} onChange={(val) => setDiscount({...discount, enabled: val})} />
           </InlineStack>
           <Text variant="bodySm" tone="subdued">Set up discount rules, applied from lowest to highest.</Text>
- 
+
           <Select 
             label="Discount Type"
             options={[
@@ -339,9 +325,9 @@ export default function BundleSetupUI({ initialData }) {
             autoComplete="off" 
             prefix={discount.type === 'Percentage Off' ? '%' : '$'}
           />
- 
+
           <Divider />
- 
+
           <Text variant="headingSm" as="h3">Discount Messaging</Text>
           <TextField 
             label="Discount Text (Rule #1)" 
@@ -355,10 +341,10 @@ export default function BundleSetupUI({ initialData }) {
             onChange={(val) => setDiscount({...discount, successMessage: val})} 
             autoComplete="off" 
           />
- 
+
         </BlockStack>
       </Card>
- 
+
       <input type="hidden" name="bundleConfiguration" value={JSON.stringify({ parentProduct, steps, discount })} />
     </BlockStack>
   );

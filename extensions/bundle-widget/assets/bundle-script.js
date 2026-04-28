@@ -6,19 +6,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modal          = document.getElementById("gbb-modal");
   const overlay        = document.getElementById("gbb-modal-overlay");
   const atcBtn         = document.getElementById("gbb-add-to-cart-btn");
- 
+
   if (!rootDiv) return;
   const productId = rootDiv.getAttribute("data-product-id");
- 
+
   if (modal && overlay) {
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
   }
- 
+
   let bundleData       = null;
   let selections       = {}; 
   let currentModalCatId = null;
- 
+
   try {
     const res = await fetch(`${APP_URL}/api/bundle/${productId}`);
     if (res.ok) bundleData = await res.json();
@@ -26,12 +26,55 @@ document.addEventListener("DOMContentLoaded", async () => {
   } catch (err) {
     return stepsContainer.innerHTML = "<p>Connection failed.</p>";
   }
- 
+
   if (!bundleData.categories) return;
+
+  // 🌟 FETCH LIVE PRICING & INVENTORY TO HIDE OUT OF STOCK 🌟
+  stepsContainer.innerHTML = '<p style="text-align: center;">Syncing live prices & stock...</p>';
+
+  const uniqueHandles = [...new Set(
+    bundleData.categories.flatMap(c => c.products.map(p => p.handle).filter(Boolean))
+  )];
+
+  if (uniqueHandles.length > 0) {
+    const liveProductData = {};
+    await Promise.all(uniqueHandles.map(async (handle) => {
+      try {
+        const req = await fetch(`/products/${handle}.js`);
+        if (req.ok) {
+          liveProductData[handle] = await req.json();
+        }
+      } catch (e) {
+        console.error("Failed to fetch live data for", handle);
+      }
+    }));
+
+    bundleData.categories.forEach(cat => {
+      const availableProducts = [];
+      cat.products.forEach(p => {
+        if (p.handle && liveProductData[p.handle]) {
+          const liveProd = liveProductData[p.handle];
+          const numericVariantId = String(p.variantId).split('/').pop();
+          const liveVariant = liveProd.variants.find(v => String(v.id) === numericVariantId);
+
+          // ONLY push if available!
+          if (liveVariant && liveVariant.available) {
+            p.price = liveVariant.price / 100; // Shopify returns cents, convert to dollars
+            availableProducts.push(p);
+          }
+        } else {
+          // Fallback if handle wasn't saved yet
+          availableProducts.push(p);
+        }
+      });
+      cat.products = availableProducts;
+    });
+  }
+
   bundleData.categories.forEach(cat => { selections[cat.id] = []; });
- 
+
   // ── HELPERS ──────────────────────────────────────────────────────────────
- 
+
   const getBaseTotal = () => {
     let total = 0;
     Object.values(selections).forEach(catItems =>
@@ -39,7 +82,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     );
     return total;
   };
- 
+
   const getFinalPrice = (baseTotal) => {
     if (!bundleData.discountEnabled || bundleData.discountValue <= 0) return baseTotal;
     if (bundleData.discountType === "PERCENTAGE") {
@@ -51,7 +94,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     return baseTotal;
   };
- 
+
   const getDiscountLabel = () => {
     if (!bundleData.discountEnabled || bundleData.discountValue <= 0) return "";
     if (bundleData.discountType === "PERCENTAGE") return `${bundleData.discountValue}% off`;
@@ -63,19 +106,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     return "";
   };
- 
+
   const isCatFulfilled = (catId) => {
     const cat = bundleData.categories.find(c => c.id === catId);
     const required = parseInt(cat?.rule?.value || 1);
     const selected = (selections[catId] || []).reduce((s, i) => s + i.qty, 0);
     return selected >= required;
   };
- 
+
   const allCatsFulfilled = () =>
     bundleData.categories.every(cat => isCatFulfilled(cat.id));
- 
+
   // ── RENDER MAIN UI ───────────────────────────────────────────────────────
- 
+
   const renderMainUI = () => {
     stepsContainer.innerHTML = "";
     
@@ -86,9 +129,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       const requiredQty       = parseInt(cat.rule?.value || 1);
       const currentSelected   = selections[cat.id];
       const totalSelectedQty  = currentSelected.reduce((sum, item) => sum + item.qty, 0);
- 
+      const fulfilled         = totalSelectedQty >= requiredQty;
+
       let html = `<div class="gbb-category-title">${cat.name}</div>`;
- 
+
       currentSelected.forEach(item => {
         for (let i = 0; i < item.qty; i++) {
           html += `
@@ -101,7 +145,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             </div>`;
         }
       });
- 
+
       const emptySlots = Math.max(0, requiredQty - totalSelectedQty);
       for (let i = 0; i < emptySlots; i++) {
         html += `
@@ -116,14 +160,14 @@ document.addEventListener("DOMContentLoaded", async () => {
             <span style="font-weight:bold;">+ Add more ${cat.name}</span>
           </div>`;
       }
- 
+
       section.innerHTML = html;
       stepsContainer.appendChild(section);
     });
- 
+
     calculateTotals();
   };
- 
+
   window.removeItem = (catId, vId) => {
     const idx = selections[catId].findIndex(i => i.product.variantId === vId);
     if (idx > -1) {
@@ -132,28 +176,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     renderMainUI();
   };
- 
+
   // ── MODAL ────────────────────────────────────────────────────────────────
- 
+
   window.openModal = (catId) => {
     const existingModalBody = modal.querySelector('.gbbMixModalBody');
     const savedScrollPosition = (existingModalBody && currentModalCatId === catId) 
       ? existingModalBody.scrollTop 
       : 0;
- 
+
     currentModalCatId = catId;
     overlay.classList.add("active");
     modal.classList.add("gbbMixProductsModalOpen");
- 
+
     const cat         = bundleData.categories.find(c => c.id === catId);
     const requiredQty = parseInt(cat.rule?.value || 1);
- 
+
     const baseTotal      = getBaseTotal();
     const finalPrice     = getFinalPrice(baseTotal);
     const discLabel      = getDiscountLabel();
     const bundleComplete = allCatsFulfilled();
     let footerDiscLabel  = bundleComplete ? discLabel : "";
- 
+
     // Tabs
     let tabsHtml = `<div class="gbb-tabs-container">`;
     bundleData.categories.forEach(c => {
@@ -161,10 +205,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       tabsHtml += `<div class="gbb-tab ${isActive}" onclick="navToTab('${c.id}')">${c.name}</div>`;
     });
     tabsHtml += `</div>`;
- 
+
     // Rule text + discount message
     let ruleHtml = `<div class="gbb-rule-text">Add at least ${requiredQty} ${cat.name}</div>`;
- 
+
     if (bundleData.discountEnabled && bundleData.discountValue > 0) {
       const totalRequired = bundleData.categories.reduce((sum, c) =>
         sum + parseInt(c.rule?.value || 1), 0);
@@ -174,7 +218,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const discountValue     = bundleData.discountValue;
       const discountValueUnit = bundleData.discountType === "PERCENTAGE" ? "%" :
                                 bundleData.discountType === "FIXED"       ? " off" : "";
- 
+
       let discMsgHtml = "";
       if (bundleComplete && bundleData.successMessage) {
         discMsgHtml = `<div class="gbb-discount-msg gbb-discount-success" style="text-align:center;padding:6px 16px;">${bundleData.successMessage}</div>`;
@@ -187,7 +231,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       ruleHtml += discMsgHtml;
     }
- 
+
     const headerHtml = `
       <div class="gbb-modal-header">
         <div class="gbb-modal-close" onclick="closeModal()">
@@ -196,50 +240,46 @@ document.addEventListener("DOMContentLoaded", async () => {
         ${tabsHtml}
         ${ruleHtml}
       </div>`;
- 
-    // ✅ FIX: Filter out-of-stock products before rendering modal items
-    const availableProducts = cat.products.filter(p => p.available !== false);
- 
+
     let bodyHtml = `<div class="gbbMixModalBody"><div class="gbbMixProductsItemsContainer">`;
-    availableProducts.forEach(p => {
-      const selectedItem    = selections[catId].find(i => i.product.variantId === p.variantId);
-      const currentQty      = selectedItem ? selectedItem.qty : 0;
-      const isSelectedClass = currentQty > 0 ? "selected" : "";
-      const checkBadge      = currentQty > 0 ? `<div class="gbb-check-badge">✓</div>` : "";
- 
-      // ✅ FIX: price is already a float (e.g. 19.99) from the API, toFixed(2) works correctly
-      bodyHtml += `
-        <div class="gbbMixProductItem ${isSelectedClass}">
-          ${checkBadge}
-          <img src="${p.imageUrl}" style="width:100%; aspect-ratio: 1/1; object-fit: cover; border-radius:5px; margin-bottom:10px;">
-          <div style="font-weight:bold;font-size:14px;">${p.title}</div>
-          <div style="color:#666;margin-bottom:10px;">$${parseFloat(p.price).toFixed(2)}</div>
-          ${currentQty > 0 ? `
-            <div class="gbb-qty-control">
-              <div class="gbb-qty-btn" onclick="updateQty('${catId}', '${p.variantId}', -1)">-</div>
-              <div class="gbb-qty-val">${currentQty}</div>
-              <div class="gbb-qty-btn" onclick="updateQty('${catId}', '${p.variantId}', 1)">+</div>
-            </div>` : `
-            <div class="gbbMixAddtoCartBtn" style="padding:8px;background:#99c1de;color:#000;" onclick="updateQty('${catId}', '${p.variantId}', 1)">
-              Add to Cart
-            </div>`}
-        </div>`;
-    });
- 
-    // ✅ Show a message if all products in this category are out of stock
-    if (availableProducts.length === 0) {
-      bodyHtml += `<div style="text-align:center;padding:40px;color:#666;width:100%;">No products available in this category.</div>`;
+    
+    if (cat.products.length === 0) {
+      bodyHtml += `<div style="padding: 20px; text-align: center; width: 100%;">Out of stock.</div>`;
+    } else {
+      cat.products.forEach(p => {
+        const selectedItem    = selections[catId].find(i => i.product.variantId === p.variantId);
+        const currentQty      = selectedItem ? selectedItem.qty : 0;
+        const isSelectedClass = currentQty > 0 ? "selected" : "";
+        const checkBadge      = currentQty > 0 ? `<div class="gbb-check-badge">✓</div>` : "";
+
+        bodyHtml += `
+          <div class="gbbMixProductItem ${isSelectedClass}">
+            ${checkBadge}
+            <img src="${p.imageUrl}" style="width:100%; aspect-ratio: 1/1; object-fit: cover; border-radius:5px; margin-bottom:10px;">
+            <div style="font-weight:bold;font-size:14px;">${p.title}</div>
+            <div style="color:#666;margin-bottom:10px;">$${p.price.toFixed(2)}</div>
+            ${currentQty > 0 ? `
+              <div class="gbb-qty-control">
+                <div class="gbb-qty-btn" onclick="updateQty('${catId}', '${p.variantId}', -1)">-</div>
+                <div class="gbb-qty-val">${currentQty}</div>
+                <div class="gbb-qty-btn" onclick="updateQty('${catId}', '${p.variantId}', 1)">+</div>
+              </div>` : `
+              <div class="gbbMixAddtoCartBtn" style="padding:8px;background:#99c1de;color:#000;" onclick="updateQty('${catId}', '${p.variantId}', 1)">
+                Add
+              </div>`}
+          </div>`;
+      });
     }
- 
+    
     bodyHtml += `</div></div>`;
- 
+
     const totalItems = Object.values(selections).flat().reduce((s, i) => s + i.qty, 0);
- 
+
     let priceDisplay = `$${baseTotal.toFixed(2)}`;
     if (bundleComplete && baseTotal > finalPrice && baseTotal > 0) {
       priceDisplay = `<s style="opacity:0.6">$${baseTotal.toFixed(2)}</s> $${finalPrice.toFixed(2)}`;
     }
- 
+
     const footerHtml = `
       <div class="gbb-floating-footer">
         <div id="gbb-tooltip" class="gbb-tooltip">Add at least ${requiredQty} products on this step</div>
@@ -255,20 +295,19 @@ document.addEventListener("DOMContentLoaded", async () => {
           <div class="gbb-footer-btn gbb-btn-next" onclick="navTab(1)">Next</div>
         </div>
       </div>`;
- 
+
     modal.innerHTML = headerHtml + bodyHtml + footerHtml;
- 
+
     const newModalBody = modal.querySelector('.gbbMixModalBody');
     if (newModalBody) {
       newModalBody.scrollTop = savedScrollPosition;
     }
   };
- 
-  // Navigate to a tab with forward validation
+
   window.navToTab = (targetCatId) => {
     const currentIndex = bundleData.categories.findIndex(c => c.id === currentModalCatId);
     const targetIndex  = bundleData.categories.findIndex(c => c.id === targetCatId);
- 
+
     if (targetIndex > currentIndex) {
       if (!isCatFulfilled(currentModalCatId)) {
         const tooltip = document.getElementById("gbb-tooltip");
@@ -281,7 +320,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     openModal(targetCatId);
   };
- 
+
   window.updateQty = (catId, vId, change) => {
     const cat  = bundleData.categories.find(c => c.id === catId);
     const prod = cat.products.find(p => p.variantId === vId);
@@ -292,10 +331,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderMainUI();
     openModal(catId);
   };
- 
+
   window.navTab = (direction) => {
     const currentIndex = bundleData.categories.findIndex(c => c.id === currentModalCatId);
- 
+
     if (direction > 0 && !isCatFulfilled(currentModalCatId)) {
       const tooltip = document.getElementById("gbb-tooltip");
       if (tooltip) {
@@ -304,7 +343,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       return;
     }
- 
+
     const nextIndex = currentIndex + direction;
     if (nextIndex >= 0 && nextIndex < bundleData.categories.length) {
       openModal(bundleData.categories[nextIndex].id);
@@ -312,17 +351,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       closeModal();
     }
   };
- 
+
   // ── TOTALS & ATC ─────────────────────────────────────────────────────────
- 
+
   const calculateTotals = () => {
     const baseTotal  = getBaseTotal();
     const finalPrice = getFinalPrice(baseTotal);
     const discLabel  = getDiscountLabel();
     const fulfilled  = allCatsFulfilled();
- 
+
     let btnHtml = "Add Bundle to Cart";
-    if (baseTotal > 0) {
+      if (baseTotal > 0) {
       if (fulfilled && baseTotal > finalPrice) {
         btnHtml += ` • <s style="opacity:0.65">$${baseTotal.toFixed(2)}</s> $${finalPrice.toFixed(2)}`;
         if (discLabel) {
@@ -332,9 +371,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         btnHtml += ` • $${baseTotal.toFixed(2)}`;
       }
     }
- 
+
     atcBtn.innerHTML = btnHtml;
- 
+
     if (fulfilled) {
       atcBtn.classList.remove("gbbMixAddtoCartBtnDisabled");
       atcBtn.style.opacity = "1";
@@ -347,13 +386,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       atcBtn.onclick       = null;
     }
   };
- 
+
   const executeAddToCart = async () => {
     atcBtn.innerHTML = "Adding Bundle...";
     const uniqueBundleId = "BUN-" + Date.now();
     const parentGID      = bundleData.parentVariantId || "";
     const cleanId        = (gid) => String(gid).split('/').pop();
- 
+
     try {
       const cartRes = await fetch('/cart.js');
       const cart    = await cartRes.json();
@@ -362,7 +401,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (item.properties?.["Box"]) maxBox = Math.max(maxBox, parseInt(item.properties["Box"]) || 0);
       });
       const currentBox = maxBox + 1;
- 
+
       const baseTotal = getBaseTotal();
       let priceMultiplier = 1;
       if (bundleData.discountEnabled && bundleData.discountValue > 0 && baseTotal > 0) {
@@ -370,10 +409,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         else if (bundleData.discountType === "FIXED")       priceMultiplier = Math.max(0, baseTotal - bundleData.discountValue) / baseTotal;
         else if (bundleData.discountType === "FIXED_PRICE") priceMultiplier = bundleData.discountValue / baseTotal;
       }
- 
+
       const itemsStringArr = [];
       const components     = [];
- 
+
       Object.values(selections).forEach(catItems => {
         catItems.forEach(item => {
           const variantText = item.product.title
@@ -381,7 +420,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             .replace(/\s*Default Title/gi, "")
             .trim();
           itemsStringArr.push(`${item.qty} x ${variantText}`);
- 
+
           components.push({
             variantId: cleanId(item.product.variantId),
             quantity:  item.qty,
@@ -390,9 +429,9 @@ document.addEventListener("DOMContentLoaded", async () => {
           });
         });
       });
- 
+
       const itemsString = itemsStringArr.join(", ");
- 
+
       const items = [{
         id: cleanId(parentGID),
         quantity: 1,
@@ -404,13 +443,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           "Box":         String(currentBox)
         }
       }];
- 
+
       const res = await fetch('/cart/add.js', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ items })
       });
- 
+
       if (res.ok) {
         window.location.href = '/checkout';
       }
@@ -419,12 +458,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       atcBtn.innerHTML = "Error Adding Bundle";
     }
   };
- 
+
   window.closeModal = () => {
     overlay.classList.remove("active");
     modal.classList.remove("gbbMixProductsModalOpen");
   };
- 
+
   if (overlay) overlay.addEventListener("click", closeModal);
   renderMainUI();
 });
