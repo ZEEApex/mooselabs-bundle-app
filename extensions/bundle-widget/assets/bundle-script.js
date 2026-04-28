@@ -28,6 +28,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (!bundleData.categories) return;
+
+  // ✅ FIX 1: Normalize price from cents to dollars.
+  // Shopify returns prices as integers in cents (e.g. 1999 = $19.99).
+  // If your API already returns decimal dollars, remove the `/ 100`.
+  const toPrice = (cents) => (Number(cents) / 100);
+
+  // ✅ FIX 2: Filter out-of-stock products from every category on load.
+  bundleData.categories = bundleData.categories.map(cat => ({
+    ...cat,
+    products: cat.products.filter(p =>
+      p.available !== false && (p.inventoryQuantity == null || p.inventoryQuantity > 0)
+    )
+  }));
+
   bundleData.categories.forEach(cat => { selections[cat.id] = []; });
 
   // ── HELPERS ──────────────────────────────────────────────────────────────
@@ -35,7 +49,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const getBaseTotal = () => {
     let total = 0;
     Object.values(selections).forEach(catItems =>
-      catItems.forEach(item => total += item.product.price * item.qty)
+      catItems.forEach(item => total += toPrice(item.product.price) * item.qty) // ✅ FIX 1
     );
     return total;
   };
@@ -137,7 +151,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ── MODAL ────────────────────────────────────────────────────────────────
 
   window.openModal = (catId) => {
-    // 🚨 SCROLL FIX 1: Capture current scroll position BEFORE wiping HTML
     const existingModalBody = modal.querySelector('.gbbMixModalBody');
     const savedScrollPosition = (existingModalBody && currentModalCatId === catId) 
       ? existingModalBody.scrollTop 
@@ -156,7 +169,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const bundleComplete = allCatsFulfilled();
     let footerDiscLabel  = bundleComplete ? discLabel : "";
 
-    // Tabs
     let tabsHtml = `<div class="gbb-tabs-container">`;
     bundleData.categories.forEach(c => {
       const isActive = c.id === catId ? "active" : "";
@@ -164,7 +176,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
     tabsHtml += `</div>`;
 
-    // Rule text + discount message
     let ruleHtml = `<div class="gbb-rule-text">Add at least ${requiredQty} ${cat.name}</div>`;
 
     if (bundleData.discountEnabled && bundleData.discountValue > 0) {
@@ -205,13 +216,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       const currentQty      = selectedItem ? selectedItem.qty : 0;
       const isSelectedClass = currentQty > 0 ? "selected" : "";
       const checkBadge      = currentQty > 0 ? `<div class="gbb-check-badge">✓</div>` : "";
+      const displayPrice    = toPrice(p.price).toFixed(2); // ✅ FIX 1
 
       bodyHtml += `
         <div class="gbbMixProductItem ${isSelectedClass}">
           ${checkBadge}
           <img src="${p.imageUrl}" style="width:100%; aspect-ratio: 1/1; object-fit: cover; border-radius:5px; margin-bottom:10px;">
           <div style="font-weight:bold;font-size:14px;">${p.title}</div>
-          <div style="color:#666;margin-bottom:10px;">$${p.price.toFixed(2)}</div>
+          <div style="color:#666;margin-bottom:10px;">$${displayPrice}</div>
           ${currentQty > 0 ? `
             <div class="gbb-qty-control">
               <div class="gbb-qty-btn" onclick="updateQty('${catId}', '${p.variantId}', -1)">-</div>
@@ -250,20 +262,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     modal.innerHTML = headerHtml + bodyHtml + footerHtml;
 
-    // 🚨 SCROLL FIX 2: Synchronous scroll! Because images now have a defined aspect-ratio, 
-    // the browser immediately knows the container height and doesn't reject this command. No more flicker!
     const newModalBody = modal.querySelector('.gbbMixModalBody');
     if (newModalBody) {
       newModalBody.scrollTop = savedScrollPosition;
     }
   };
 
-  // Navigate to a tab with forward validation
   window.navToTab = (targetCatId) => {
     const currentIndex = bundleData.categories.findIndex(c => c.id === currentModalCatId);
     const targetIndex  = bundleData.categories.findIndex(c => c.id === targetCatId);
 
-    // Going forward — validate current tab
     if (targetIndex > currentIndex) {
       if (!isCatFulfilled(currentModalCatId)) {
         const tooltip = document.getElementById("gbb-tooltip");
@@ -317,15 +325,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     const fulfilled  = allCatsFulfilled();
 
     let btnHtml = "Add Bundle to Cart";
-      if (baseTotal > 0) {
-      // Only strikethrough + badge when everything is selected
+    if (baseTotal > 0) {
       if (fulfilled && baseTotal > finalPrice) {
         btnHtml += ` • <s style="opacity:0.65">$${baseTotal.toFixed(2)}</s> $${finalPrice.toFixed(2)}`;
         if (discLabel) {
           btnHtml += ` <span style="background:rgba(255,255,255,0.9);color:#111;border-radius:4px;padding:2px 7px;font-size:12px;font-weight:600;">${discLabel}</span>`;
         }
       } else {
-        // Not complete yet — just show running total at full price
         btnHtml += ` • $${baseTotal.toFixed(2)}`;
       }
     }
@@ -360,7 +366,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
       const currentBox = maxBox + 1;
 
-      // Calculate discount multiplier
       const baseTotal = getBaseTotal();
       let priceMultiplier = 1;
       if (bundleData.discountEnabled && bundleData.discountValue > 0 && baseTotal > 0) {
@@ -369,7 +374,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         else if (bundleData.discountType === "FIXED_PRICE") priceMultiplier = bundleData.discountValue / baseTotal;
       }
 
-      // Build items string + components
       const itemsStringArr = [];
       const components     = [];
 
@@ -384,7 +388,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           components.push({
             variantId: cleanId(item.product.variantId),
             quantity:  item.qty,
-            price:     (item.product.price * priceMultiplier).toFixed(2),
+            price:     (toPrice(item.product.price) * priceMultiplier).toFixed(2), // ✅ FIX 1
             box:       String(currentBox)
           });
         });
@@ -392,7 +396,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       const itemsString = itemsStringArr.join(", ");
 
-      // ✅ Only parent product added — function expands to components
       const items = [{
         id: cleanId(parentGID),
         quantity: 1,
