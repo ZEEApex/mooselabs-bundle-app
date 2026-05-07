@@ -17,7 +17,6 @@ export const action = async ({ request }) => {
   
   let variantIds = [];
   try {
-    // Safety check in case the storefront sends weird data
     const body = await request.json();
     variantIds = body.variantIds || [];
   } catch (e) {
@@ -29,13 +28,9 @@ export const action = async ({ request }) => {
   }
 
   try {
-    // Securely connect to the Shopify Admin API using the main shopify object
     const { admin } = await shopify.unauthenticated.admin(shop);
-    
-    // Format the IDs for GraphQL (e.g., gid://shopify/ProductVariant/123456)
     const gids = variantIds.map(id => String(id).includes('gid://') ? id : `gid://shopify/ProductVariant/${id}`);
     
-    // Bulk query the metafields for all requested variants at once
     const response = await admin.graphql(`
       query {
         nodes(ids: ${JSON.stringify(gids)}) {
@@ -52,11 +47,14 @@ export const action = async ({ request }) => {
     const data = await response.json();
     const hiddenVariants = [];
 
-    // Filter out the ones where the metafield is true
     if (data.data && data.data.nodes) {
       data.data.nodes.forEach(node => {
-        if (node && node.metafield && node.metafield.value === "true") {
-          hiddenVariants.push(node.id.split('/').pop()); // Keep just the numeric ID
+        // 🚨 THE FIX: Make it case-insensitive and handle any spaces!
+        if (node && node.metafield && node.metafield.value != null) {
+          const val = String(node.metafield.value).toLowerCase().trim();
+          if (val === "true" || val === "1") {
+            hiddenVariants.push(node.id.split('/').pop());
+          }
         }
       });
     }
