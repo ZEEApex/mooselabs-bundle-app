@@ -21,6 +21,7 @@ export default function BundleSetupUI({ initialData }) {
           title: 'Add at least 1 item',
           displayVariantsAsProducts: false,
           isExpanded: true,
+          hideVariantsByMetafield: false,
           products: [],
           rule: { type: 'Quantity', condition: '>=', value: '1' } 
         }
@@ -280,6 +281,11 @@ export default function BundleSetupUI({ initialData }) {
                         label="Display variants as individual products"
                         checked={cat.displayVariantsAsProducts}
                         onChange={(val) => updateCategory(stepIndex, catIndex, 'displayVariantsAsProducts', val)}
+                      />
+                      <Checkbox
+                        label="Hide variants with metafield `custom.hide_variant` set to true"
+                        checked={cat.hideVariantsByMetafield}
+                        onChange={(val) => updateCategory(stepIndex, catIndex, 'hideVariantsByMetafield', val)}
                       />
                     </BlockStack>
                   </Collapsible>
