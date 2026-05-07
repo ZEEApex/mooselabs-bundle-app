@@ -29,7 +29,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (!bundleData.categories) return;
 
-  // 🌟 FETCH LIVE PRICING & INVENTORY TO HIDE OUT OF STOCK 🌟
+  // 🌟 FETCH LIVE PRICING, INVENTORY & METAFIELDS 🌟
   stepsContainer.innerHTML = '<p style="text-align: center;">Syncing live prices & stock...</p>';
 
   const uniqueHandles = [...new Set(
@@ -38,6 +38,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (uniqueHandles.length > 0) {
     const liveProductData = {};
+    
+    // 1. Fetch standard live inventory/prices
     await Promise.all(uniqueHandles.map(async (handle) => {
       try {
         const req = await fetch(`/products/${handle}.js`);
@@ -49,6 +51,33 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }));
 
+    // 2. Fetch Metafields for categories that have the checkbox enabled!
+    let hiddenVariantIds = [];
+    const variantIdsToCheck = [];
+    bundleData.categories.forEach(cat => {
+      if (cat.hideVariantsByMetafield) {
+        cat.products.forEach(p => variantIdsToCheck.push(p.variantId));
+      }
+    });
+
+    if (variantIdsToCheck.length > 0) {
+      try {
+        const shopDomain = window.Shopify?.shop || "moose-labs.myshopify.com";
+        const metaRes = await fetch(`${APP_URL}/api/check-metafields?shop=${shopDomain}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ variantIds: variantIdsToCheck })
+        });
+        if (metaRes.ok) {
+          const metaData = await metaRes.json();
+          hiddenVariantIds = metaData.hiddenVariants || [];
+        }
+      } catch(e) {
+        console.error("Failed to fetch metafields", e);
+      }
+    }
+
+    // 3. Filter the UI based on inventory AND metafields
     bundleData.categories.forEach(cat => {
       const availableProducts = [];
       cat.products.forEach(p => {
@@ -57,9 +86,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           const numericVariantId = String(p.variantId).split('/').pop();
           const liveVariant = liveProd.variants.find(v => String(v.id) === numericVariantId);
 
-          // ONLY push if available!
           if (liveVariant && liveVariant.available) {
-            p.price = liveVariant.price / 100; // Shopify returns cents, convert to dollars
+            
+            // 🛑 METAFIELD CHECK: Hide it if the backend said it's hidden!
+            if (cat.hideVariantsByMetafield && hiddenVariantIds.includes(numericVariantId)) {
+              return; // Skip adding this product to the UI
+            }
+
+            p.price = liveVariant.price / 100;
             availableProducts.push(p);
           }
         } else {
@@ -244,7 +278,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     let bodyHtml = `<div class="gbbMixModalBody"><div class="gbbMixProductsItemsContainer">`;
     
     if (cat.products.length === 0) {
-      bodyHtml += `<div style="padding: 20px; text-align: center; width: 100%;">Out of stock.</div>`;
+      bodyHtml += `<div style="padding: 20px; text-align: center; width: 100%;">Out of stock or Hidden.</div>`;
     } else {
       cat.products.forEach(p => {
         const selectedItem    = selections[catId].find(i => i.product.variantId === p.variantId);
