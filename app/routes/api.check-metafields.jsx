@@ -1,5 +1,4 @@
-import { json } from "@remix-run/node";
-import { unauthenticated } from "../shopify.server";
+import shopify from "../shopify.server";
 
 export const action = async ({ request }) => {
   // Handle CORS so the storefront browser doesn't block the request
@@ -15,20 +14,28 @@ export const action = async ({ request }) => {
 
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop");
-  const { variantIds } = await request.json();
+  
+  let variantIds = [];
+  try {
+    // Safety check in case the storefront sends weird data
+    const body = await request.json();
+    variantIds = body.variantIds || [];
+  } catch (e) {
+    return Response.json({ hiddenVariants: [] }, { headers: { "Access-Control-Allow-Origin": "*" } });
+  }
 
-  if (!shop || !variantIds || variantIds.length === 0) {
-    return json({ hiddenVariants: [] }, { headers: { "Access-Control-Allow-Origin": "*" } });
+  if (!shop || variantIds.length === 0) {
+    return Response.json({ hiddenVariants: [] }, { headers: { "Access-Control-Allow-Origin": "*" } });
   }
 
   try {
-    // Securely connect to the Shopify Admin API for this specific store
-    const { admin } = await unauthenticated.admin(shop);
+    // Securely connect to the Shopify Admin API using the main shopify object
+    const { admin } = await shopify.unauthenticated.admin(shop);
     
     // Format the IDs for GraphQL (e.g., gid://shopify/ProductVariant/123456)
     const gids = variantIds.map(id => String(id).includes('gid://') ? id : `gid://shopify/ProductVariant/${id}`);
     
-    // Bulk query the metafields for all requested variants at once!
+    // Bulk query the metafields for all requested variants at once
     const response = await admin.graphql(`
       query {
         nodes(ids: ${JSON.stringify(gids)}) {
@@ -54,12 +61,12 @@ export const action = async ({ request }) => {
       });
     }
 
-    return json({ hiddenVariants }, {
+    return Response.json({ hiddenVariants }, {
       headers: { "Access-Control-Allow-Origin": "*" }
     });
 
   } catch (err) {
     console.error("Metafield fetch error:", err);
-    return json({ hiddenVariants: [] }, { headers: { "Access-Control-Allow-Origin": "*" } });
+    return Response.json({ hiddenVariants: [] }, { headers: { "Access-Control-Allow-Origin": "*" } });
   }
 };
