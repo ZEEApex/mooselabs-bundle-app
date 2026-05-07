@@ -261,7 +261,8 @@ export default function BundleSetupUI({ initialData }) {
                             <Button size="small" onClick={() => openResourcePicker(false, stepIndex, catIndex)}>Add Products</Button>
                           </InlineStack>
                           
-                          {cat.products.length > 0 && (
+                          {!cat.hideVariantsByMetafield ? (
+                          cat.products.length > 0 && (
                             <BlockStack gap="200">
                               {cat.products.map((prod, prodIndex) => (
                                 <InlineStack key={prodIndex} align="space-between" blockAlign="center">
@@ -273,7 +274,10 @@ export default function BundleSetupUI({ initialData }) {
                                 </InlineStack>
                               ))}
                             </BlockStack>
-                          )}
+                          )
+                        ) : (
+                          <Text variant="bodySm" tone="subdued">Variants hidden by metafield.</Text>
+                        )
                         </BlockStack>
                       </Box>
 
