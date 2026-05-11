@@ -1,8 +1,5 @@
 import { useLoaderData, useNavigate, useSearchParams } from "react-router";
-import { 
-  Page, Card, BlockStack, InlineStack, Text, Button, 
-  DataTable, Badge, Select, Box, InlineGrid
-} from "@shopify/polaris";
+import { Page, Card, BlockStack, InlineStack, Text, Button, DataTable, Badge, Select, Box, InlineGrid } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -11,30 +8,51 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const days = parseInt(url.searchParams.get("days") || "30");
 
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days);
+
   const bundles = await db.bundle.findMany({
     where: { shop: session.shop },
     orderBy: { createdAt: 'desc' }
   });
 
+  // Sort bundles so ACTIVE ones are checked first (prevents DRAFT duplicates from stealing stats)
+  const sortedBundles = [...bundles].sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
+
   let orders = [];
   try {
-    const response = await fetch(`https://${session.shop}/admin/api/2024-01/orders.json?status=any&limit=200`, {
-      headers: {
-        "X-Shopify-Access-Token": session.accessToken,
-        "Content-Type": "application/json"
+    // FIX 1: Fetch paginated orders so high-volume stores don't cut off Friday's orders!
+    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
+    
+    let pages = 0;
+    while (fetchUrl && pages < 5) { // up to 1250 orders max to stay fast
+      const response = await fetch(fetchUrl, {
+        headers: {
+          "X-Shopify-Access-Token": session.accessToken,
+          "Content-Type": "application/json"
+        }
+      });
+      const json = await response.json();
+      if (json.orders) orders = orders.concat(json.orders);
+      
+      const linkHeader = response.headers.get("Link");
+      fetchUrl = null;
+      if (linkHeader) {
+        const links = linkHeader.split(",");
+        const nextLink = links.find(link => link.includes('rel="next"'));
+        if (nextLink) {
+          const match = nextLink.match(/<([^>]+)>/);
+          if (match) fetchUrl = match[1];
+        }
       }
-    });
-    const json = await response.json();
-    orders = json.orders || [];
+      pages++;
+    }
   } catch(e) { 
     console.error("Orders fetch crashed:", e); 
   }
 
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - days);
-
-  // Initialize stats with parentVariantId for fallback matching
-  const bundleStats = bundles.map(b => ({
+  // Initialize stats
+  const bundleStats = sortedBundles.map(b => ({
     id: b.id,
     name: b.name,
     nameKey: b.name.trim().toLowerCase(),
@@ -50,8 +68,6 @@ export const loader = async ({ request }) => {
   const processedOrders = new Set();
 
   orders.forEach(order => {
-    const orderDate = new Date(order.created_at);
-    if (orderDate < cutoffDate) return;
     if (!order.line_items) return;
 
     order.line_items.forEach(item => {
@@ -60,44 +76,43 @@ export const loader = async ({ request }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
-      // Grab all possible identifiers
-      const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
-      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
-      const genericBundleAttr = props.find(p => typeof p.name === 'string' && p.name.toLowerCase().includes('bundle'));
-
       let matchedStats = null;
+      const itemTitle = String(item.title || '').toLowerCase();
+      const itemName = String(item.name || '').toLowerCase();
+      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      // 1. Try matching by Name
-      if (bundleNameAttr) {
-        const bName = String(bundleNameAttr.value).trim().toLowerCase();
-        matchedStats = bundleStats.find(bs => bs.nameKey === bName);
-      }
+      for (const bs of bundleStats) {
+        let isMatch = false;
 
-      // 2. Try matching by ID
-      if (!matchedStats && bundleIdAttr) {
-        const bId = String(bundleIdAttr.value).trim();
-        matchedStats = bundleStats.find(bs => bs.id === bId);
-      }
+        // 1. Title/Name Match
+        if (itemTitle.includes(bs.nameKey) || itemName.includes(bs.nameKey)) {
+          isMatch = true;
+        }
+        
+        // 2. Variant ID Match
+        if (!isMatch && bs.parentVariantId && itemVarId) {
+          const numParentId = String(bs.parentVariantId).split('/').pop();
+          if (itemVarId === numParentId) isMatch = true;
+        }
 
-      // 3. Try generic fallback name
-      if (!matchedStats && genericBundleAttr) {
-         const fallbackName = String(genericBundleAttr.value).trim().toLowerCase();
-         matchedStats = bundleStats.find(bs => bs.nameKey === fallbackName);
-      }
+        // 3. Properties Match (Aggressive fallback)
+        if (!isMatch && Array.isArray(props)) {
+          for (const p of props) {
+            const pVal = String(p.value || '').toLowerCase();
+            if (pVal === bs.nameKey || pVal.includes(bs.nameKey)) {
+              isMatch = true;
+              break;
+            }
+          }
+        }
 
-      // 4. THE ULTIMATE FIX: Try matching by Product Variant ID (strip out the gid://)
-      if (!matchedStats) {
-        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
-        if (variantId) {
-           const stringVariantId = String(variantId);
-           matchedStats = bundleStats.find(bs => {
-              const numericParentId = bs.parentVariantId ? String(bs.parentVariantId).split('/').pop() : null;
-              return numericParentId === stringVariantId;
-           });
+        if (isMatch) {
+          matchedStats = bs;
+          break; // Found the active bundle! Stop looking.
         }
       }
 
-      // If we found a match, calculate the revenue!
+      // Apply stats
       if (matchedStats) {
         const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
         
@@ -118,7 +133,7 @@ export const loader = async ({ request }) => {
 
   const totalAOV = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-  const bundleStatsClean = Object.values(bundleStats).map(b => ({
+  const bundleStatsClean = bundleStats.map(b => ({
     id: b.id, name: b.name, status: b.status, orders: b.orders, revenue: b.revenue
   })).sort((a, b) => b.revenue - a.revenue);
 

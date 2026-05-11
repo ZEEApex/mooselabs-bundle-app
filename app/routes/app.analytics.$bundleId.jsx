@@ -1,5 +1,5 @@
 import { useLoaderData, useNavigate, useSearchParams } from "react-router";
-import { Page, Card, BlockStack, InlineStack, Text, DataTable, Select, InlineGrid } from "@shopify/polaris";
+import { Page, Card, BlockStack, Text, DataTable, Select, InlineGrid } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -11,28 +11,43 @@ export const loader = async ({ request, params }) => {
   const bundle = await db.bundle.findUnique({ where: { id: params.bundleId } });
   if (!bundle) throw new Response("Not found", { status: 404 });
 
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days);
+
   let orders = [];
   try {
-    const response = await fetch(`https://${session.shop}/admin/api/2024-01/orders.json?status=any&limit=200`, {
-      headers: {
-        "X-Shopify-Access-Token": session.accessToken,
-        "Content-Type": "application/json"
+    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
+    let pages = 0;
+    while (fetchUrl && pages < 5) {
+      const response = await fetch(fetchUrl, {
+        headers: {
+          "X-Shopify-Access-Token": session.accessToken,
+          "Content-Type": "application/json"
+        }
+      });
+      const json = await response.json();
+      if (json.orders) orders = orders.concat(json.orders);
+      
+      const linkHeader = response.headers.get("Link");
+      fetchUrl = null;
+      if (linkHeader) {
+        const links = linkHeader.split(",");
+        const nextLink = links.find(link => link.includes('rel="next"'));
+        if (nextLink) {
+          const match = nextLink.match(/<([^>]+)>/);
+          if (match) fetchUrl = match[1];
+        }
       }
-    });
-    const json = await response.json();
-    orders = json.orders || [];
+      pages++;
+    }
   } catch(e) { 
     console.error("REST Orders fetch error:", e); 
   }
 
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - days);
-  
   const bundleOrders = [];
+  const targetName = bundle.name.trim().toLowerCase();
   
   orders.forEach(order => {
-    const orderDate = new Date(order.created_at);
-    if (orderDate < cutoffDate) return;
     if (!order.line_items) return;
 
     let bundleFoundInOrder = false;
@@ -44,28 +59,30 @@ export const loader = async ({ request, params }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
-      // Grab all possible identifiers
-      const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
-      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
-      const genericBundleAttr = props.find(p => typeof p.name === 'string' && p.name.toLowerCase().includes('bundle'));
-
       let isMatch = false;
+      const itemTitle = String(item.title || '').toLowerCase();
+      const itemName = String(item.name || '').toLowerCase();
+      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      // Check all 4 fallbacks exactly like the main page
-      if (bundleNameAttr && String(bundleNameAttr.value).trim().toLowerCase() === bundle.name.trim().toLowerCase()) {
+      // 1. Title match
+      if (itemTitle.includes(targetName) || itemName.includes(targetName)) {
         isMatch = true;
-      } else if (bundleIdAttr && String(bundleIdAttr.value).trim() === bundle.id) {
-        isMatch = true;
-      } else if (genericBundleAttr && String(genericBundleAttr.value).trim().toLowerCase() === bundle.name.trim().toLowerCase()) {
-        isMatch = true;
-      } else {
-        // Ultimate ID match fallback
-        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
-        if (variantId) {
-           const numericParentId = bundle.parentVariantId ? String(bundle.parentVariantId).split('/').pop() : null;
-           if (numericParentId === String(variantId)) {
-              isMatch = true;
-           }
+      }
+
+      // 2. Variant ID match
+      if (!isMatch && bundle.parentVariantId && itemVarId) {
+        const numParentId = String(bundle.parentVariantId).split('/').pop();
+        if (itemVarId === numParentId) isMatch = true;
+      }
+
+      // 3. Properties Match
+      if (!isMatch && Array.isArray(props)) {
+        for (const p of props) {
+          const pVal = String(p.value || '').toLowerCase();
+          if (pVal === targetName || pVal.includes(targetName)) {
+            isMatch = true;
+            break;
+          }
         }
       }
 
