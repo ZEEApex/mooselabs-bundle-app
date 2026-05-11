@@ -44,18 +44,34 @@ export const loader = async ({ request, params }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
-      // Look ONLY for _bundleName
+      // Grab all possible identifiers
       const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
+      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
+      const genericBundleAttr = props.find(p => typeof p.name === 'string' && p.name.toLowerCase().includes('bundle'));
 
-      if (bundleNameAttr) {
-        const bName = String(bundleNameAttr.value).trim().toLowerCase();
-        const targetName = bundle.name.trim().toLowerCase();
+      let isMatch = false;
 
-        if (bName === targetName) {
-          bundleFoundInOrder = true;
-          // Add this specific item's price to the total bundle revenue for this order
-          bundleRevenue += parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+      // Check all 4 fallbacks exactly like the main page
+      if (bundleNameAttr && String(bundleNameAttr.value).trim().toLowerCase() === bundle.name.trim().toLowerCase()) {
+        isMatch = true;
+      } else if (bundleIdAttr && String(bundleIdAttr.value).trim() === bundle.id) {
+        isMatch = true;
+      } else if (genericBundleAttr && String(genericBundleAttr.value).trim().toLowerCase() === bundle.name.trim().toLowerCase()) {
+        isMatch = true;
+      } else {
+        // Ultimate ID match fallback
+        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
+        if (variantId) {
+           const numericParentId = bundle.parentVariantId ? String(bundle.parentVariantId).split('/').pop() : null;
+           if (numericParentId === String(variantId)) {
+              isMatch = true;
+           }
         }
+      }
+
+      if (isMatch) {
+        bundleFoundInOrder = true;
+        bundleRevenue += parseFloat(item.price || 0) * parseInt(item.quantity || 1);
       }
     });
 

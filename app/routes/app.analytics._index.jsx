@@ -33,7 +33,7 @@ export const loader = async ({ request }) => {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
 
-  // Use an array to store bundle stats, include parentVariantId for fallback matching
+  // Initialize stats with parentVariantId for fallback matching
   const bundleStats = bundles.map(b => ({
     id: b.id,
     name: b.name,
@@ -60,43 +60,58 @@ export const loader = async ({ request }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
-      // Look ONLY for _bundleName
+      // Grab all possible identifiers
       const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
+      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
+      const genericBundleAttr = props.find(p => typeof p.name === 'string' && p.name.toLowerCase().includes('bundle'));
 
+      let matchedStats = null;
+
+      // 1. Try matching by Name
       if (bundleNameAttr) {
         const bName = String(bundleNameAttr.value).trim().toLowerCase();
-        
-        // Use the raw line item price since _components is gone
-        const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+        matchedStats = bundleStats.find(bs => bs.nameKey === bName);
+      }
 
-        const matchedStats = bundleStats.find(bs => bs.nameKey === bName);
+      // 2. Try matching by ID
+      if (!matchedStats && bundleIdAttr) {
+        const bId = String(bundleIdAttr.value).trim();
+        matchedStats = bundleStats.find(bs => bs.id === bId);
+      }
 
-        if (matchedStats) {
-          if (!matchedStats.orderIds.has(order.id)) {
-            matchedStats.orderIds.add(order.id);
-            matchedStats.orders += 1;
-          }
-          matchedStats.revenue += itemPrice;
+      // 3. Try generic fallback name
+      if (!matchedStats && genericBundleAttr) {
+         const fallbackName = String(genericBundleAttr.value).trim().toLowerCase();
+         matchedStats = bundleStats.find(bs => bs.nameKey === fallbackName);
+      }
+
+      // 4. THE ULTIMATE FIX: Try matching by Product Variant ID (strip out the gid://)
+      if (!matchedStats) {
+        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
+        if (variantId) {
+           const stringVariantId = String(variantId);
+           matchedStats = bundleStats.find(bs => {
+              const numericParentId = bs.parentVariantId ? String(bs.parentVariantId).split('/').pop() : null;
+              return numericParentId === stringVariantId;
+           });
         }
+      }
+
+      // If we found a match, calculate the revenue!
+      if (matchedStats) {
+        const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+        
+        if (!matchedStats.orderIds.has(order.id)) {
+          matchedStats.orderIds.add(order.id);
+          matchedStats.orders += 1;
+        }
+        matchedStats.revenue += itemPrice;
 
         if (!processedOrders.has(order.id)) {
           processedOrders.add(order.id);
           totalRevenue += parseFloat(order.current_total_price || order.total_price || 0);
           totalOrders += 1;
         }
-          // Variant fallback: if bundle not identified by name or _bundleId, try matching by product variant ID (parentVariantId)
-          const variantId = item?.variant?.id ?? item?.variant_id ?? (item?.merchandise?.id);
-          if (!bundleNameAttr && !(bundleIdAttr || genericBundleAttr) && variantId) {
-            const matchedVarStats = bundleStats.find(bs => bs.parentVariantId === variantId);
-            if (matchedVarStats) {
-              if (!matchedVarStats.orderIds.has(order.id)) {
-                matchedVarStats.orderIds.add(order.id);
-                matchedVarStats.orders += 1;
-              }
-              const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
-              matchedVarStats.revenue += itemPrice;
-            }
-          }
       }
     });
   });
@@ -119,7 +134,7 @@ export default function Analytics() {
 
   const rows = bundleStats.map(b => [
     <Button variant="plain" onClick={() => navigate(`/app/analytics/${b.id}`)}>{b.name}</Button>,
-    <Badge tone={b.status?.toUpperCase() === 'ACTIVE' ? 'success' : 'attention'}>{b.status}</Badge>,
+    <Badge tone={b.status?.toUpperCase() === 'ACTIVE' ? 'success' : 'attention'}>{b.status || 'DRAFT'}</Badge>,
     b.orders,
     `$${b.revenue.toFixed(2)}`,
     b.orders > 0 ? `$${(b.revenue / b.orders).toFixed(2)}` : '-'
