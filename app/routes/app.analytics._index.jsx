@@ -33,13 +33,16 @@ export const loader = async ({ request }) => {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
 
-  const bundleStats = {};
-  bundles.forEach(b => {
-    bundleStats[b.name.trim().toLowerCase()] = { 
-      id: b.id, name: b.name, status: b.status,
-      orders: 0, revenue: 0, orderIds: new Set()
-    };
-  });
+  // Use an array to store bundle stats to avoid collisions on duplicate names
+  const bundleStats = bundles.map(b => ({
+    id: b.id,
+    name: b.name,
+    nameKey: b.name.trim().toLowerCase(),
+    status: b.status,
+    orders: 0,
+    revenue: 0,
+    orderIds: new Set()
+  }));
 
   let totalRevenue = 0;
   let totalOrders = 0;
@@ -65,7 +68,7 @@ export const loader = async ({ request }) => {
         // Use the raw line item price since _components is gone
         const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
 
-        const matchedStats = bundleStats[bName];
+        const matchedStats = bundleStats.find(bs => bs.nameKey === bName);
 
         if (matchedStats) {
           if (!matchedStats.orderIds.has(order.id)) {
@@ -102,7 +105,7 @@ export default function Analytics() {
 
   const rows = bundleStats.map(b => [
     <Button variant="plain" onClick={() => navigate(`/app/analytics/${b.id}`)}>{b.name}</Button>,
-    <Badge tone={b.status === 'ACTIVE' ? 'success' : 'attention'}>{b.status}</Badge>,
+    <Badge tone={b.status?.toUpperCase() === 'ACTIVE' ? 'success' : 'attention'}>{b.status}</Badge>,
     b.orders,
     `$${b.revenue.toFixed(2)}`,
     b.orders > 0 ? `$${(b.revenue / b.orders).toFixed(2)}` : '-'
@@ -120,7 +123,7 @@ export default function Analytics() {
             { label: 'Total Bundle Sales', value: `$${totals.revenue.toFixed(2)}` },
             { label: 'Total Bundle Orders', value: totals.orders },
             { label: 'Total AOV', value: `$${totals.aov.toFixed(2)}` },
-            { label: 'Active Bundles', value: bundleStats.filter(b => b.status === 'ACTIVE').length },
+            { label: 'Active Bundles', value: bundleStats.filter(b => b.status?.toUpperCase() === 'ACTIVE').length },
           ].map((stat, i) => (
             <Card key={i}>
               <BlockStack gap="100">

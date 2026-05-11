@@ -24,7 +24,7 @@ export function run(input) {
       if (!groupedLines[bundleId]) {
         groupedLines[bundleId] = {
           parentVariantId: parentVariantId,
-          title: bundleName,
+          title: "bundlebuilder",
           cartLines: []
         };
       }
