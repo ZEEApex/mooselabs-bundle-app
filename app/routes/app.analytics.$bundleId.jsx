@@ -13,18 +13,27 @@ export const loader = async ({ request, params }) => {
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
+  cutoffDate.setHours(0, 0, 0, 0);
 
   let orders = [];
   try {
-    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
+    const fetchUrlObj = new URL(`https://${session.shop}/admin/api/2024-01/orders.json`);
+    fetchUrlObj.searchParams.append("status", "any");
+    fetchUrlObj.searchParams.append("limit", "250");
+    fetchUrlObj.searchParams.append("created_at_min", cutoffDate.toISOString());
+
+    let fetchUrl = fetchUrlObj.toString();
     let pages = 0;
-    while (fetchUrl && pages < 5) {
+    while (fetchUrl && pages < 10) {
       const response = await fetch(fetchUrl, {
         headers: {
           "X-Shopify-Access-Token": session.accessToken,
           "Content-Type": "application/json"
         }
       });
+      
+      if (!response.ok) break;
+
       const json = await response.json();
       if (json.orders) orders = orders.concat(json.orders);
       
@@ -48,6 +57,8 @@ export const loader = async ({ request, params }) => {
   const targetName = bundle.name.trim().toLowerCase();
   
   orders.forEach(order => {
+    const orderDate = new Date(order.created_at);
+    if (orderDate < cutoffDate) return;
     if (!order.line_items) return;
 
     let bundleFoundInOrder = false;
@@ -59,30 +70,25 @@ export const loader = async ({ request, params }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
+      const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
+      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
+
       let isMatch = false;
-      const itemTitle = String(item.title || '').toLowerCase();
-      const itemName = String(item.name || '').toLowerCase();
-      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      // 1. Title match
-      if (itemTitle.includes(targetName) || itemName.includes(targetName)) {
+      // 1. ID Match
+      if (bundleIdAttr && String(bundleIdAttr.value).trim() === bundle.id) {
         isMatch = true;
-      }
-
-      // 2. Variant ID match
-      if (!isMatch && bundle.parentVariantId && itemVarId) {
-        const numParentId = String(bundle.parentVariantId).split('/').pop();
-        if (itemVarId === numParentId) isMatch = true;
-      }
-
-      // 3. Properties Match
-      if (!isMatch && Array.isArray(props)) {
-        for (const p of props) {
-          const pVal = String(p.value || '').toLowerCase();
-          if (pVal === targetName || pVal.includes(targetName)) {
-            isMatch = true;
-            break;
-          }
+      } 
+      // 2. Name Match
+      else if (!isMatch && bundleNameAttr && String(bundleNameAttr.value).trim().toLowerCase() === targetName) {
+        isMatch = true;
+      } 
+      // 3. Variant Match
+      else if (!isMatch) {
+        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
+        if (variantId && bundle.parentVariantId) {
+          const numericParentId = String(bundle.parentVariantId).split('/').pop();
+          if (String(variantId) === numericParentId) isMatch = true;
         }
       }
 
