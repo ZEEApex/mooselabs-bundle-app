@@ -10,37 +10,28 @@ export const loader = async ({ request }) => {
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
-  cutoffDate.setHours(0, 0, 0, 0); // Start precisely at midnight for accuracy
 
   const bundles = await db.bundle.findMany({
     where: { shop: session.shop },
     orderBy: { createdAt: 'desc' }
   });
 
+  // Sort bundles so ACTIVE ones are checked first (prevents DRAFT duplicates from stealing stats)
+  const sortedBundles = [...bundles].sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
+
   let orders = [];
   try {
-    // 🚨 FIX: Using URL object to perfectly encode the date and prevent API crashes!
-    const fetchUrlObj = new URL(`https://${session.shop}/admin/api/2024-01/orders.json`);
-    fetchUrlObj.searchParams.append("status", "any");
-    fetchUrlObj.searchParams.append("limit", "250");
-    fetchUrlObj.searchParams.append("created_at_min", cutoffDate.toISOString());
+    // FIX 1: Fetch paginated orders so high-volume stores don't cut off Friday's orders!
+    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
     
-    let fetchUrl = fetchUrlObj.toString();
     let pages = 0;
-    
-    while (fetchUrl && pages < 10) { // Safely fetches up to 2,500 orders
+    while (fetchUrl && pages < 5) { // up to 1250 orders max to stay fast
       const response = await fetch(fetchUrl, {
         headers: {
           "X-Shopify-Access-Token": session.accessToken,
           "Content-Type": "application/json"
         }
       });
-      
-      if (!response.ok) {
-        console.error("Shopify API Error:", await response.text());
-        break;
-      }
-
       const json = await response.json();
       if (json.orders) orders = orders.concat(json.orders);
       
@@ -61,7 +52,7 @@ export const loader = async ({ request }) => {
   }
 
   // Initialize stats
-  const bundleStats = bundles.map(b => ({
+  const bundleStats = sortedBundles.map(b => ({
     id: b.id,
     name: b.name,
     nameKey: b.name.trim().toLowerCase(),
@@ -77,8 +68,6 @@ export const loader = async ({ request }) => {
   const processedOrders = new Set();
 
   orders.forEach(order => {
-    const orderDate = new Date(order.created_at);
-    if (orderDate < cutoffDate) return;
     if (!order.line_items) return;
 
     order.line_items.forEach(item => {
@@ -87,38 +76,43 @@ export const loader = async ({ request }) => {
         props = Object.keys(props).map(k => ({ name: k, value: props[k] }));
       }
 
-      const bundleNameAttr = props.find(p => p.name === "_bundleName" || p.key === "_bundleName");
-      const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
-
       let matchedStats = null;
+      const itemTitle = String(item.title || '').toLowerCase();
+      const itemName = String(item.name || '').toLowerCase();
+      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      // Priority 1: Exact ID Match
-      if (bundleIdAttr) {
-        const bId = String(bundleIdAttr.value).trim();
-        matchedStats = bundleStats.find(bs => bs.id === bId);
-      }
+      for (const bs of bundleStats) {
+        let isMatch = false;
 
-      // Priority 2: Name Match (Prioritize ACTIVE to avoid Draft bugs!)
-      if (!matchedStats && bundleNameAttr) {
-        const bName = String(bundleNameAttr.value).trim().toLowerCase();
-        matchedStats = bundleStats.find(bs => bs.nameKey === bName && bs.status === 'ACTIVE') || 
-                       bundleStats.find(bs => bs.nameKey === bName);
-      }
+        // 1. Title/Name Match
+        if (itemTitle.includes(bs.nameKey) || itemName.includes(bs.nameKey)) {
+          isMatch = true;
+        }
+        
+        // 2. Variant ID Match
+        if (!isMatch && bs.parentVariantId && itemVarId) {
+          const numParentId = String(bs.parentVariantId).split('/').pop();
+          if (itemVarId === numParentId) isMatch = true;
+        }
 
-      // Priority 3: Fallback to Variant ID
-      if (!matchedStats) {
-        const variantId = item?.variant_id ?? item?.variant?.id ?? item?.merchandise?.id;
-        if (variantId) {
-          const stringVariantId = String(variantId);
-          matchedStats = bundleStats.find(bs => {
-            if (!bs.parentVariantId) return false;
-            const numericParentId = String(bs.parentVariantId).split('/').pop();
-            return numericParentId === stringVariantId;
-          });
+        // 3. Properties Match (Aggressive fallback)
+        if (!isMatch && Array.isArray(props)) {
+          for (const p of props) {
+            const pVal = String(p.value || '').toLowerCase();
+            if (pVal === bs.nameKey || pVal.includes(bs.nameKey)) {
+              isMatch = true;
+              break;
+            }
+          }
+        }
+
+        if (isMatch) {
+          matchedStats = bs;
+          break; // Found the active bundle! Stop looking.
         }
       }
 
-      // Record the revenue!
+      // Apply stats
       if (matchedStats) {
         const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
         
