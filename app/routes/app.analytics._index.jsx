@@ -83,6 +83,20 @@ export const loader = async ({ request }) => {
           totalRevenue += parseFloat(order.current_total_price || order.total_price || 0);
           totalOrders += 1;
         }
+          // Additional fallback: check for _bundleId when name not found
+          const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
+          if (bundleIdAttr) {
+            const bId = String(bundleIdAttr.value).trim();
+            const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+            const matchedStats = bundleStats.find(bs => bs.id === bId);
+            if (matchedStats) {
+              if (!matchedStats.orderIds.has(order.id)) {
+                matchedStats.orderIds.add(order.id);
+                matchedStats.orders += 1;
+              }
+              matchedStats.revenue += itemPrice;
+            }
+          }
       }
     });
   });
