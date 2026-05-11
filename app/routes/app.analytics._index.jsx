@@ -33,12 +33,13 @@ export const loader = async ({ request }) => {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
 
-  // Use an array to store bundle stats to avoid collisions on duplicate names
+  // Use an array to store bundle stats, include parentVariantId for fallback matching
   const bundleStats = bundles.map(b => ({
     id: b.id,
     name: b.name,
     nameKey: b.name.trim().toLowerCase(),
     status: b.status,
+    parentVariantId: b.parentVariantId,
     orders: 0,
     revenue: 0,
     orderIds: new Set()
@@ -83,26 +84,17 @@ export const loader = async ({ request }) => {
           totalRevenue += parseFloat(order.current_total_price || order.total_price || 0);
           totalOrders += 1;
         }
-          // Additional fallback: check for _bundleId or any bundle attribute when name not found
-          const bundleIdAttr = props.find(p => p.name === "_bundleId" || p.key === "_bundleId");
-          const genericBundleAttr = props.find(p => typeof p.name === 'string' && p.name.toLowerCase().includes('bundle'));
-          if (!bundleNameAttr && (bundleIdAttr || genericBundleAttr)) {
-            const bId = bundleIdAttr ? String(bundleIdAttr.value).trim() : null;
-            const fallbackName = genericBundleAttr ? String(genericBundleAttr.value).trim().toLowerCase() : null;
-            const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
-            let matchedStats = null;
-            if (bId) {
-              matchedStats = bundleStats.find(bs => bs.id === bId);
-            }
-            if (!matchedStats && fallbackName) {
-              matchedStats = bundleStats.find(bs => bs.nameKey === fallbackName);
-            }
-            if (matchedStats) {
-              if (!matchedStats.orderIds.has(order.id)) {
-                matchedStats.orderIds.add(order.id);
-                matchedStats.orders += 1;
+          // Variant fallback: if bundle not identified by name or _bundleId, try matching by product variant ID (parentVariantId)
+          const variantId = item?.variant?.id ?? item?.variant_id ?? (item?.merchandise?.id);
+          if (!bundleNameAttr && !(bundleIdAttr || genericBundleAttr) && variantId) {
+            const matchedVarStats = bundleStats.find(bs => bs.parentVariantId === variantId);
+            if (matchedVarStats) {
+              if (!matchedVarStats.orderIds.has(order.id)) {
+                matchedVarStats.orderIds.add(order.id);
+                matchedVarStats.orders += 1;
               }
-              matchedStats.revenue += itemPrice;
+              const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+              matchedVarStats.revenue += itemPrice;
             }
           }
       }
