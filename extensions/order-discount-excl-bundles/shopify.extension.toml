@@ -1,0 +1,19 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Order discount excluding bundles"
+handle = "order-discount-excl-bundles"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"
+
+  [extensions.input.variables]
+  namespace = "$app:order-discount-excl-bundles"
+  key = "function-configuration"
