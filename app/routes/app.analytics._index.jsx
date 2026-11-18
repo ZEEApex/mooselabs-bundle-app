@@ -1,15 +1,13 @@
-import { useLoaderData, useNavigate, useSearchParams } from "react-router";
-import { Page, Card, BlockStack, InlineStack, Text, Button, DataTable, Badge, Select, Box, InlineGrid } from "@shopify/polaris";
+import { useLoaderData, useNavigate } from "react-router";
+import { Page, Card, BlockStack, InlineStack, Text, Button, DataTable, Badge, Box, InlineGrid } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import DateRangePicker, { resolveRange } from "../components/DateRangePicker.jsx";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const days = parseInt(url.searchParams.get("days") || "30");
-
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - days);
+  const { min: cutoffDate, max: untilDate } = resolveRange(url);
 
   const bundles = await db.bundle.findMany({
     where: { shop: session.shop },
@@ -22,8 +20,8 @@ export const loader = async ({ request }) => {
   let orders = [];
   try {
     // FIX 1: Fetch paginated orders so high-volume stores don't cut off Friday's orders!
-    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
-    
+    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}&created_at_max=${untilDate.toISOString()}`;
+
     let pages = 0;
     while (fetchUrl && pages < 5) { // up to 1250 orders max to stay fast
       const response = await fetch(fetchUrl, {
@@ -113,9 +111,13 @@ export const loader = async ({ request }) => {
 
       if (!matchedStats) return;
 
-      // Net revenue for this bundle line = price*qty minus any line discount.
+      // Net revenue for this bundle line = price*qty minus every discount
+      // allocated to it (line-level AND order-level), so heavily discounted
+      // orders report true bundle revenue.
       const gross = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
-      const lineDiscount = parseFloat(item.total_discount || 0);
+      const lineDiscount = Array.isArray(item.discount_allocations) && item.discount_allocations.length
+        ? item.discount_allocations.reduce((s, a) => s + parseFloat(a.amount || 0), 0)
+        : parseFloat(item.total_discount || 0);
       const net = Math.max(gross - lineDiscount, 0);
 
       matchedStats.revenue += net;
@@ -136,13 +138,12 @@ export const loader = async ({ request }) => {
     id: b.id, name: b.name, status: b.status, orders: b.orders, revenue: b.revenue
   })).sort((a, b) => b.revenue - a.revenue);
 
-  return { bundleStats: bundleStatsClean, totals: { revenue: totalRevenue, orders: totalOrders, aov: totalAOV }, days };
+  return { bundleStats: bundleStatsClean, totals: { revenue: totalRevenue, orders: totalOrders, aov: totalAOV } };
 };
 
 export default function Analytics() {
-  const { bundleStats, totals, days } = useLoaderData();
+  const { bundleStats, totals } = useLoaderData();
   const navigate = useNavigate();
-  const [, setSearchParams] = useSearchParams();
 
   const maxRevenue = Math.max(...bundleStats.map(b => b.revenue), 1);
 
@@ -155,11 +156,7 @@ export default function Analytics() {
   ]);
 
   return (
-    <Page title="Analytics" backAction={{ content: 'Home', onAction: () => navigate('/app') }} primaryAction={
-      <Select labelHidden label="Date range" value={String(days)} onChange={(val) => setSearchParams({ days: val })}
-        options={[{ label: 'Last 7 Days', value: '7' }, { label: 'Last 30 Days', value: '30' }, { label: 'Last 60 Days', value: '60' }]}
-      />
-    }>
+    <Page title="Analytics" backAction={{ content: 'Home', onAction: () => navigate('/app') }} primaryAction={<DateRangePicker />}>
       <BlockStack gap="500">
         <InlineGrid columns="1fr 1fr 1fr 1fr" gap="400">
           {[

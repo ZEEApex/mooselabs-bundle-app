@@ -1,22 +1,21 @@
-import { useLoaderData, useNavigate, useSearchParams } from "react-router";
-import { Page, Card, BlockStack, Text, DataTable, Select, InlineGrid } from "@shopify/polaris";
+import { useLoaderData, useNavigate } from "react-router";
+import { Page, Card, BlockStack, Text, DataTable, InlineGrid } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import DateRangePicker, { resolveRange } from "../components/DateRangePicker.jsx";
 
 export const loader = async ({ request, params }) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const days = parseInt(url.searchParams.get("days") || "30");
 
   const bundle = await db.bundle.findUnique({ where: { id: params.bundleId } });
   if (!bundle) throw new Response("Not found", { status: 404 });
 
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - days);
+  const { min: cutoffDate, max: untilDate } = resolveRange(url);
 
   let orders = [];
   try {
-    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}`;
+    let fetchUrl = `https://${session.shop}/admin/api/2024-04/orders.json?status=any&limit=250&created_at_min=${cutoffDate.toISOString()}&created_at_max=${untilDate.toISOString()}`;
     let pages = 0;
     while (fetchUrl && pages < 5) {
       const response = await fetch(fetchUrl, {
@@ -87,7 +86,9 @@ export const loader = async ({ request, params }) => {
       if (isMatch) {
         bundleFoundInOrder = true;
         const gross = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
-        const lineDiscount = parseFloat(item.total_discount || 0);
+        const lineDiscount = Array.isArray(item.discount_allocations) && item.discount_allocations.length
+          ? item.discount_allocations.reduce((s, a) => s + parseFloat(a.amount || 0), 0)
+          : parseFloat(item.total_discount || 0);
         bundleRevenue += Math.max(gross - lineDiscount, 0);
       }
     });
@@ -108,25 +109,19 @@ export const loader = async ({ request, params }) => {
   const aov          = totalOrders > 0 ? totalRevenue / totalOrders : 0;
   const orderAov     = totalOrders > 0 ? bundleOrders.reduce((s, o) => s + o.orderValue, 0) / totalOrders : 0;
 
-  return { bundle, bundleOrders, totals: { revenue: totalRevenue, orders: totalOrders, aov, orderAov }, days };
+  return { bundle, bundleOrders, totals: { revenue: totalRevenue, orders: totalOrders, aov, orderAov } };
 };
 
 export default function BundleAnalytics() {
-  const { bundle, bundleOrders, totals, days } = useLoaderData();
+  const { bundle, bundleOrders, totals } = useLoaderData();
   const navigate = useNavigate();
-  const [, setSearchParams] = useSearchParams();
 
   const rows = bundleOrders.map(o => [
     o.name, o.date, `$${o.orderValue.toFixed(2)}`, `$${o.bundleValue.toFixed(2)}`, `${o.bundleShare}%`
   ]);
 
   return (
-    <Page title={bundle.name} backAction={{ content: 'Analytics', onAction: () => navigate('/app/analytics') }} primaryAction={
-        <Select labelHidden label="Date range" value={String(days)} onChange={(val) => setSearchParams({ days: val })}
-          options={[{ label: 'Last 7 Days', value: '7' }, { label: 'Last 30 Days', value: '30' }, { label: 'Last 60 Days', value: '60' }]}
-        />
-      }
-    >
+    <Page title={bundle.name} backAction={{ content: 'Analytics', onAction: () => navigate('/app/analytics') }} primaryAction={<DateRangePicker />}>
       <BlockStack gap="500">
         <InlineGrid columns="1fr 1fr 1fr 1fr" gap="400">
           {[
