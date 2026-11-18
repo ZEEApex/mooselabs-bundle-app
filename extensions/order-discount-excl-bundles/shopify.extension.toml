@@ -1,4 +1,5 @@
 api_version = "2026-10"
+uid = "853401f9-28a6-c327-8ff7-c1d7abb44a32fae8e877"
 
 [[extensions]]
 name = "Order discount excluding bundles"
