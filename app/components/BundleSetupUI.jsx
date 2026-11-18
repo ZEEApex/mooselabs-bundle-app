@@ -1,13 +1,13 @@
-import { useState } from 'react';
-import { 
-  Card, BlockStack, InlineStack, Text, Button, 
-  TextField, Checkbox, Collapsible, Divider, Box, 
-  Select, Thumbnail, Layout 
+import { useState, useEffect, useRef } from 'react';
+import {
+  Card, BlockStack, InlineStack, Text, Button,
+  TextField, Checkbox, Collapsible, Divider, Box,
+  Select, Thumbnail, Layout
 } from '@shopify/polaris';
 import { ChevronDownIcon, ChevronUpIcon, DeleteIcon, PlusIcon, ImageIcon } from '@shopify/polaris-icons';
 
-export default function BundleSetupUI({ initialData }) {
-  
+export default function BundleSetupUI({ initialData, onChange }) {
+
   const [parentProduct, setParentProduct] = useState(initialData?.parentProduct || null);
 
   const [steps, setSteps] = useState(initialData?.steps || [
@@ -36,6 +36,20 @@ export default function BundleSetupUI({ initialData }) {
     ruleText: 'Add 1 product to get 10% OFF discount!',
     successMessage: "Sweet! You've scored 10% OFF your bundle!"
   });
+
+  // Notify the parent form whenever the bundle configuration changes (skipping
+  // the initial mount) so it can toggle the unsaved-changes save bar. The
+  // callback is held in a ref so an inline parent function can't retrigger it.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const didMount = useRef(false);
+  useEffect(() => {
+    if (!didMount.current) {
+      didMount.current = true;
+      return;
+    }
+    onChangeRef.current?.();
+  }, [parentProduct, steps, discount]);
 
   // --- SHOPIFY RESOURCE PICKER LOGIC ---
   const openResourcePicker = async (isParent = false, stepIndex = null, catIndex = null) => {

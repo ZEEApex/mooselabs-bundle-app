@@ -63,9 +63,23 @@ export const loader = async ({ request }) => {
     orderIds: new Set()
   }));
 
+  // Reads the deterministic `_bundleName` tag that the cart-transform function
+  // writes onto EVERY expanded bundle line item. This is the reliable key for
+  // attributing an order line to a bundle (far more accurate than matching on
+  // titles/substrings, which over-counts).
+  const readBundleNameProp = (props) => {
+    if (!Array.isArray(props)) return null;
+    for (const p of props) {
+      if (String(p?.name || '').toLowerCase() === '_bundlename') {
+        return String(p?.value || '').trim().toLowerCase();
+      }
+    }
+    return null;
+  };
+
+  const bundlesByName = new Map(bundleStats.map(b => [b.nameKey, b]));
+  const ordersWithBundle = new Set();
   let totalRevenue = 0;
-  let totalOrders = 0;
-  const processedOrders = new Set();
 
   orders.forEach(order => {
     if (!order.line_items) return;
@@ -77,60 +91,45 @@ export const loader = async ({ request }) => {
       }
 
       let matchedStats = null;
-      const itemTitle = String(item.title || '').toLowerCase();
-      const itemName = String(item.name || '').toLowerCase();
-      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      for (const bs of bundleStats) {
-        let isMatch = false;
+      // 1. Primary: exact match on the _bundleName tag.
+      const taggedName = readBundleNameProp(props);
+      if (taggedName) {
+        matchedStats = bundlesByName.get(taggedName) || null;
+      }
 
-        // 1. Title/Name Match
-        if (itemTitle.includes(bs.nameKey) || itemName.includes(bs.nameKey)) {
-          isMatch = true;
-        }
-        
-        // 2. Variant ID Match
-        if (!isMatch && bs.parentVariantId && itemVarId) {
-          const numParentId = String(bs.parentVariantId).split('/').pop();
-          if (itemVarId === numParentId) isMatch = true;
-        }
-
-        // 3. Properties Match (Aggressive fallback)
-        if (!isMatch && Array.isArray(props)) {
-          for (const p of props) {
-            const pVal = String(p.value || '').toLowerCase();
-            if (pVal === bs.nameKey || pVal.includes(bs.nameKey)) {
-              isMatch = true;
+      // 2. Fallback: a bundle sold as its parent variant (exact variant id).
+      if (!matchedStats) {
+        const itemVarId = String(item.variant_id || item.variant?.id || '');
+        if (itemVarId) {
+          for (const bs of bundleStats) {
+            if (bs.parentVariantId && String(bs.parentVariantId).split('/').pop() === itemVarId) {
+              matchedStats = bs;
               break;
             }
           }
         }
-
-        if (isMatch) {
-          matchedStats = bs;
-          break; // Found the active bundle! Stop looking.
-        }
       }
 
-      // Apply stats
-      if (matchedStats) {
-        const itemPrice = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
-        
-        if (!matchedStats.orderIds.has(order.id)) {
-          matchedStats.orderIds.add(order.id);
-          matchedStats.orders += 1;
-        }
-        matchedStats.revenue += itemPrice;
+      if (!matchedStats) return;
 
-        if (!processedOrders.has(order.id)) {
-          processedOrders.add(order.id);
-          totalRevenue += parseFloat(order.current_total_price || order.total_price || 0);
-          totalOrders += 1;
-        }
+      // Net revenue for this bundle line = price*qty minus any line discount.
+      const gross = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+      const lineDiscount = parseFloat(item.total_discount || 0);
+      const net = Math.max(gross - lineDiscount, 0);
+
+      matchedStats.revenue += net;
+      totalRevenue += net; // only bundle revenue, not whole-order totals
+
+      if (!matchedStats.orderIds.has(order.id)) {
+        matchedStats.orderIds.add(order.id);
+        matchedStats.orders += 1;
       }
+      ordersWithBundle.add(order.id);
     });
   });
 
+  const totalOrders = ordersWithBundle.size;
   const totalAOV = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
   const bundleStatsClean = bundleStats.map(b => ({

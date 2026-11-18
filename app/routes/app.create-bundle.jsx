@@ -1,5 +1,6 @@
 import { Page, Layout, Card, BlockStack, TextField, Button, Select } from "@shopify/polaris";
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { Form, useNavigate, useNavigation, redirect } from "react-router";
 import db from "../db.server";
@@ -32,21 +33,56 @@ export const action = async ({ request }) => {
 };
 
 
+const SAVE_BAR_ID = "bundle-create-save-bar";
+
 // --- FRONTEND: THE UI ---
 export default function CreateBundle() {
   const [bundleName, setBundleName] = useState("");
   const [status, setStatus] = useState("ACTIVE"); // <--- State for Status
   const navigate = useNavigate();
   const navigation = useNavigation();
-  
+  const shopify = useAppBridge();
+  const formRef = useRef(null);
+
+  const [dirty, setDirty] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
+  const markDirty = useCallback(() => setDirty(true), []);
+
   const isSaving = navigation.state === "submitting";
 
+  useEffect(() => {
+    if (!shopify?.saveBar) return;
+    if (dirty) shopify.saveBar.show(SAVE_BAR_ID);
+    else shopify.saveBar.hide(SAVE_BAR_ID);
+  }, [dirty, shopify]);
+
+  useEffect(() => {
+    if (navigation.state === "idle") setDirty(false);
+  }, [navigation.state]);
+
+  const handleSave = () => {
+    formRef.current?.requestSubmit();
+  };
+
+  const handleDiscard = () => {
+    setBundleName("");
+    setStatus("ACTIVE");
+    setResetKey((k) => k + 1); // remounts the builder back to an empty bundle
+    setDirty(false);
+  };
+
   return (
-    <Page 
-      title="Create New Bundle" 
+    <Page
+      title="Create New Bundle"
       backAction={{ content: 'Bundles', onAction: () => navigate('/app') }}
     >
-      <Form method="post">
+      <SaveBar id={SAVE_BAR_ID}>
+        <button variant="primary" onClick={handleSave} loading={isSaving ? "" : undefined}>
+          Save
+        </button>
+        <button onClick={handleDiscard}>Discard</button>
+      </SaveBar>
+      <Form method="post" ref={formRef}>
         <input type="hidden" name="status" value={status} /> {/* <--- Hidden input for the backend */}
         <Layout>
           <Layout.Section>
@@ -54,19 +90,19 @@ export default function CreateBundle() {
               
               <Card>
                 <BlockStack gap="400">
-                  <TextField 
-                    label="Bundle Name" 
-                    name="bundleName" 
-                    value={bundleName} 
-                    onChange={setBundleName} 
-                    autoComplete="off" 
+                  <TextField
+                    label="Bundle Name"
+                    name="bundleName"
+                    value={bundleName}
+                    onChange={(val) => { setBundleName(val); markDirty(); }}
+                    autoComplete="off"
                     placeholder="e.g. MouthPeace Micro Bundle"
                   />
                 </BlockStack>
               </Card>
 
               {/* Injects our dynamic UI and the hidden JSON input */}
-              <BundleSetupUI />
+              <BundleSetupUI key={resetKey} onChange={markDirty} />
 
             </BlockStack>
           </Layout.Section>
@@ -83,7 +119,7 @@ export default function CreateBundle() {
                       { label: 'Draft', value: 'DRAFT' }
                     ]}
                     value={status}
-                    onChange={setStatus}
+                    onChange={(val) => { setStatus(val); markDirty(); }}
                   />
                 </BlockStack>
               </Card>

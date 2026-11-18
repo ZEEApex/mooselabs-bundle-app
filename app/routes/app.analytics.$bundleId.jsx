@@ -46,7 +46,20 @@ export const loader = async ({ request, params }) => {
 
   const bundleOrders = [];
   const targetName = bundle.name.trim().toLowerCase();
-  
+  const numParentId = bundle.parentVariantId ? String(bundle.parentVariantId).split('/').pop() : null;
+
+  // Reads the deterministic `_bundleName` tag the cart-transform writes on every
+  // expanded bundle line item — the reliable way to attribute a line to a bundle.
+  const readBundleNameProp = (props) => {
+    if (!Array.isArray(props)) return null;
+    for (const p of props) {
+      if (String(p?.name || '').toLowerCase() === '_bundlename') {
+        return String(p?.value || '').trim().toLowerCase();
+      }
+    }
+    return null;
+  };
+
   orders.forEach(order => {
     if (!order.line_items) return;
 
@@ -60,35 +73,22 @@ export const loader = async ({ request, params }) => {
       }
 
       let isMatch = false;
-      const itemTitle = String(item.title || '').toLowerCase();
-      const itemName = String(item.name || '').toLowerCase();
-      const itemVarId = String(item.variant_id || item.variant?.id || item.merchandise?.id || '');
 
-      // 1. Title match
-      if (itemTitle.includes(targetName) || itemName.includes(targetName)) {
-        isMatch = true;
-      }
+      // 1. Primary: exact match on the _bundleName tag.
+      const taggedName = readBundleNameProp(props);
+      if (taggedName && taggedName === targetName) isMatch = true;
 
-      // 2. Variant ID match
-      if (!isMatch && bundle.parentVariantId && itemVarId) {
-        const numParentId = String(bundle.parentVariantId).split('/').pop();
-        if (itemVarId === numParentId) isMatch = true;
-      }
-
-      // 3. Properties Match
-      if (!isMatch && Array.isArray(props)) {
-        for (const p of props) {
-          const pVal = String(p.value || '').toLowerCase();
-          if (pVal === targetName || pVal.includes(targetName)) {
-            isMatch = true;
-            break;
-          }
-        }
+      // 2. Fallback: bundle sold as its parent variant (exact variant id).
+      if (!isMatch && numParentId) {
+        const itemVarId = String(item.variant_id || item.variant?.id || '');
+        if (itemVarId && itemVarId === numParentId) isMatch = true;
       }
 
       if (isMatch) {
         bundleFoundInOrder = true;
-        bundleRevenue += parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+        const gross = parseFloat(item.price || 0) * parseInt(item.quantity || 1);
+        const lineDiscount = parseFloat(item.total_discount || 0);
+        bundleRevenue += Math.max(gross - lineDiscount, 0);
       }
     });
 
